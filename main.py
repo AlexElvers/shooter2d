@@ -63,6 +63,11 @@ class Bullet:
         self.y += time_elapsed * self.vy
 
 
+class ControlSettings:
+    def __init__(self):
+        self.pointer_based_movement = False
+
+
 class WindowState:
     def __init__(self):
         self.pressed_keys = set()
@@ -361,11 +366,20 @@ def handle_keys(time_elapsed):
     vx += "d" in window_state.pressed_keys
     vy -= "w" in window_state.pressed_keys
     vy += "s" in window_state.pressed_keys
+    speed = world.max_speed
+    if "Shift_L" in window_state.pressed_keys:
+        speed /= 2
     if vx or vy:
-        # world.rotation = math.atan2(vy, vx)
+        if control_settings.pointer_based_movement:
+            # move in direction of the pointer
+            rotation = math.atan2(window_state.pointer_y - world.pos_y, window_state.pointer_x - world.pos_x)
+            cos = math.cos(rotation + math.pi/2)
+            sin = math.sin(rotation + math.pi/2)
+            vx, vy = cos * vx - sin * vy, sin * vx + cos * vy
+
         norm = (vx**2 + vy**2)**.5
-        new_pos_x = world.pos_x + time_elapsed * world.max_speed * vx / norm
-        new_pos_y = world.pos_y + time_elapsed * world.max_speed * vy / norm
+        new_pos_x = world.pos_x + time_elapsed * speed * vx / norm
+        new_pos_y = world.pos_y + time_elapsed * speed * vy / norm
 
         would_collide = False
         allocation = drawingarea.get_allocation()
@@ -442,6 +456,7 @@ def tick():
 
 world = World()
 window_state = WindowState()
+control_settings = ControlSettings()
 
 win = Gtk.Window(title="Game")
 win.connect("destroy", Gtk.main_quit)
