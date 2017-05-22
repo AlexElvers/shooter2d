@@ -1,17 +1,21 @@
 """
 Game
 """
-
-import cairo
+import asyncio
 import contextlib
-import gi
 import itertools
 import math
 import time
 from typing import List
 
+import cairo
+import gbulb
+import gi
+
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
+
+gbulb.install(gtk=True)
 
 
 @contextlib.contextmanager
@@ -373,8 +377,8 @@ def handle_keys(time_elapsed):
         if control_settings.pointer_based_movement:
             # move in direction of the pointer
             rotation = math.atan2(window_state.pointer_y - world.pos_y, window_state.pointer_x - world.pos_x)
-            cos = math.cos(rotation + math.pi/2)
-            sin = math.sin(rotation + math.pi/2)
+            cos = math.cos(rotation + math.pi / 2)
+            sin = math.sin(rotation + math.pi / 2)
             vx, vy = cos * vx - sin * vy, sin * vx + cos * vy
 
         norm = (vx**2 + vy**2)**.5
@@ -459,7 +463,8 @@ window_state = WindowState()
 control_settings = ControlSettings()
 
 win = Gtk.Window(title="Game")
-win.connect("destroy", Gtk.main_quit)
+# win.connect("destroy", Gtk.main_quit)
+win.connect("destroy", lambda *args: asyncio.get_event_loop().stop())
 
 drawingarea = Gtk.DrawingArea()
 win.add(drawingarea)
@@ -475,4 +480,6 @@ win.connect("key-release-event", release_key)
 tick_timeout = GLib.timeout_add(1, tick)
 
 win.show_all()
-Gtk.main()
+
+# Gtk.main()
+asyncio.get_event_loop().run_forever()
