@@ -4,9 +4,10 @@ Game
 import asyncio
 import contextlib
 import itertools
+import json
 import math
 import time
-from typing import List
+from typing import List, Dict
 
 import cairo
 import gbulb
@@ -16,6 +17,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 
 gbulb.install(gtk=True)
+loop = asyncio.get_event_loop()
 
 
 @contextlib.contextmanager
@@ -82,45 +84,25 @@ class WindowState:
 
 class World:
     def __init__(self):
-        self.map = [
-            "################",
-            "#              #",
-            "#              #",
-            "#  ##########  #",
-            "#  #        #  #",
-            "#  #        #  #",
-            "#  #  ####     #",
-            "#        #     #",
-            "#        ##  ###",
-            "##     ####    #",
-            "##     ####    #",
-            "##     ######  #",
-            "##     ######  #",
-            "####           #",
-            "####           #",
-            "################",
-        ]
-        # self.map = [
-        #     "     ",
-        #     "     ",
-        #     "  #  ",
-        #     "     ",
-        #     "     ",
-        # ]
-        self.map_height = len(self.map)
-        self.map_width = len(self.map[0])
+        self.map: List[str] = None
+        self.map_height: int = None
+        self.map_width: int = None
         self.pos_x = 400
         self.pos_y = 400
+        self.rotation = 0
         self.health = .65
         self.max_speed = 70
         self.bullets: List[Bullet] = []
-        self.players: List[Player] = [
-            Player(100, 150, -.3, .75),
-            Player(675, 383, -.8, .15),
-        ]
+        self.players: Dict[str, Player] = {
+            "a": Player(100, 150, -.3, .75),
+            "b": Player(675, 383, -.8, .15),
+        }
 
 
 def draw(widget: Gtk.Widget, cr: cairo.Context):
+    if not world.map:
+        return
+
     allocation = widget.get_allocation()
     tile_width = allocation.width / world.map_width
     tile_height = allocation.height / world.map_height
@@ -178,7 +160,7 @@ def draw(widget: Gtk.Widget, cr: cairo.Context):
                 cr.set_source_rgba(0, 0, 0)
                 cr.stroke()
 
-    for player in world.players:
+    for player in world.players.values():
         collides = False
         for y, row in enumerate(world.map):
             for x, tile in enumerate(row):
@@ -197,8 +179,7 @@ def draw(widget: Gtk.Widget, cr: cairo.Context):
         if not collides:
             draw_player(cr, player)
 
-    rotation = math.atan2(window_state.pointer_y - world.pos_y, window_state.pointer_x - world.pos_x)
-    draw_player(cr, Player(world.pos_x, world.pos_y, rotation, world.health))
+    draw_player(cr, Player(world.pos_x, world.pos_y, world.rotation, world.health))
 
     for bullet in world.bullets:
         draw_bullet(cr, bullet)
@@ -340,7 +321,9 @@ def mouse_motion(widget: Gtk.Widget, event: Gdk.EventMotion):
     # world.pos_y = round(event.y)
     window_state.pointer_x = event.x
     window_state.pointer_y = event.y
+    world.rotation = math.atan2(window_state.pointer_y - world.pos_y, window_state.pointer_x - world.pos_x)
     widget.queue_draw()
+    client_protocol.send(type="position", x=world.pos_x, y=world.pos_y, rotation=world.rotation)
 
 
 def press_button(widget: Gtk.Widget, event: Gdk.EventButton):
@@ -376,9 +359,8 @@ def handle_keys(time_elapsed):
     if vx or vy:
         if control_settings.pointer_based_movement:
             # move in direction of the pointer
-            rotation = math.atan2(window_state.pointer_y - world.pos_y, window_state.pointer_x - world.pos_x)
-            cos = math.cos(rotation + math.pi / 2)
-            sin = math.sin(rotation + math.pi / 2)
+            cos = math.cos(self.rotation + math.pi / 2)
+            sin = math.sin(self.rotation + math.pi / 2)
             vx, vy = cos * vx - sin * vy, sin * vx + cos * vy
 
         norm = (vx**2 + vy**2)**.5
@@ -414,6 +396,7 @@ def handle_keys(time_elapsed):
             world.pos_x = new_pos_x
             world.pos_y = new_pos_y
             drawingarea.queue_draw()
+            client_protocol.send(type="position", x=world.pos_x, y=world.pos_y, rotation=world.rotation)
 
     if "Up" in window_state.pressed_keys:
         world.health = min(1, world.health + time_elapsed * .2)
@@ -431,7 +414,7 @@ def animate(time_elapsed):
     for bullet in world.bullets[:]:
         bullet.animate(time_elapsed)
         hit_someone = False
-        for player in world.players:
+        for player in world.players.values():
             if (player.x - bullet.x)**2 + (player.y - bullet.y)**2 < 10**2:
                 # hit
                 player.hit(.1)
@@ -452,10 +435,71 @@ def tick():
     time_elapsed = current_time - window_state.tick_time
     window_state.tick_time = current_time
 
+    if not world.map:
+        return True
+
     handle_keys(time_elapsed)
     animate(time_elapsed)
 
     return True
+
+
+class ClientProtocol(asyncio.Protocol):
+    def __init__(self) -> None:
+        self.buffer = b""
+        self.transport: asyncio.WriteTransport = None
+
+    def send(self, **message) -> None:
+        self.transport.write(json.dumps(message).encode() + b"\n")
+
+    def connection_made(self, transport: asyncio.WriteTransport) -> None:
+        self.transport = transport
+        self.send(type="message")
+
+    def connection_lost(self, exc) -> None:
+        print("server closed connection")
+        print("stop the event loop")
+        loop.stop()
+
+    def data_received(self, data: bytes) -> None:
+        self.buffer += data
+
+        while b"\n" in self.buffer:
+            line, self.buffer = self.buffer.split(b"\n", 1)
+            try:
+                message = json.loads(line.decode())
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                print(f"received invalid data: {line!r}")
+                return
+
+            message_type = message.get("type")
+            if isinstance(message_type, str):
+                handler = getattr(self, f"handle_{message_type}", None)
+                if handler:
+                    handler(message)
+                else:
+                    print(f"invalid message type: {message_type!r}")
+            else:
+                print("invalid message: type missing")
+
+    def handle_error(self, message):
+        print("error from server:", message["error"])
+
+    def handle_world(self, message):
+        world.map = message["map"]
+        world.map_height = len(world.map)
+        world.map_width = len(world.map[0])
+
+    def handle_position(self, message):
+        uuid = message["player"]
+        if uuid not in world.players:
+            world.players[uuid] = Player(message["x"], message["y"], message["rotation"], .5)
+        else:
+            world.players[uuid].x = message["x"]
+            world.players[uuid].y = message["y"]
+            world.players[uuid].rotation = message["rotation"]
+            print("rotation", message["rotation"])
+        drawingarea.queue_draw()
 
 
 world = World()
@@ -464,7 +508,7 @@ control_settings = ControlSettings()
 
 win = Gtk.Window(title="Game")
 # win.connect("destroy", Gtk.main_quit)
-win.connect("destroy", lambda *args: asyncio.get_event_loop().stop())
+win.connect("destroy", lambda *args: loop.stop())
 
 drawingarea = Gtk.DrawingArea()
 win.add(drawingarea)
@@ -481,5 +525,13 @@ tick_timeout = GLib.timeout_add(1, tick)
 
 win.show_all()
 
-# Gtk.main()
-asyncio.get_event_loop().run_forever()
+client_transport, client_protocol = loop.run_until_complete(loop.create_connection(ClientProtocol, "127.0.0.1", 5661))
+
+try:
+    # Gtk.main()
+    loop.run_forever()
+except KeyboardInterrupt:
+    pass
+
+client_transport.close()
+loop.close()
