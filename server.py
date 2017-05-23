@@ -69,19 +69,32 @@ class ServerClientProtocol(asyncio.Protocol):
             if client is not self:
                 client.send(**message)
 
+    def send_all(self, **message) -> None:
+        for client in clients.values():
+            client.send(**message)
+
     def connection_made(self, transport: asyncio.WriteTransport) -> None:
         self.transport = transport
         print(self.uuid, "connected")
         clients[self.uuid] = self
-        world.players[self.uuid] = Player(0, 0, 0, 0)
+        world.players[self.uuid] = Player(400, 400, 0, 1)
 
         # send initial data
         self.send(type="world", map=world.map)
+        self.send(type="uuid", uuid=self.uuid)
+
+        self.send_all(type="players", players={
+            uuid: (player.x, player.y, player.rotation, player.health) for uuid, player in world.players.items()
+        })
 
     def connection_lost(self, exc):
         print("connection lost")
         del clients[self.uuid]
         del world.players[self.uuid]
+
+        self.send_all(type="players", players={
+            uuid: (player.x, player.y, player.rotation, player.health) for uuid, player in world.players.items()
+        })
 
     def data_received(self, data: bytes) -> None:
         self.buffer += data
@@ -118,6 +131,16 @@ class ServerClientProtocol(asyncio.Protocol):
             world.players[self.uuid].y = y
             world.players[self.uuid].rotation = rotation
             self.send_others(type="position", player=self.uuid, x=x, y=y, rotation=rotation)
+
+    def handle_hit(self, message):
+        uuid = message.get("player")
+        strength = message.get("strength")
+        if uuid in world.players:
+            player = world.players[uuid]
+            player.hit(strength)
+            self.send_all(type="health", player=uuid, health=player.health)
+        else:
+            self.send(type="error", error=f"unknown uuid: {uuid!r}")
 
 
 world = World()

@@ -53,9 +53,6 @@ class Player:
         self.rotation = rotation
         self.health = health
 
-    def hit(self, damage: float) -> None:
-        self.health = max(0, self.health - damage)
-
 
 class Bullet:
     def __init__(self, x: float, y: float, vx: float, vy: float) -> None:
@@ -87,16 +84,14 @@ class World:
         self.map: List[str] = None
         self.map_height: int = None
         self.map_width: int = None
+        self.uuid: str = None
         self.pos_x = 400
         self.pos_y = 400
         self.rotation = 0
         self.health = .65
         self.max_speed = 70
         self.bullets: List[Bullet] = []
-        self.players: Dict[str, Player] = {
-            "a": Player(100, 150, -.3, .75),
-            "b": Player(675, 383, -.8, .15),
-        }
+        self.players: Dict[str, Player] = {}
 
 
 def draw(widget: Gtk.Widget, cr: cairo.Context):
@@ -359,8 +354,8 @@ def handle_keys(time_elapsed):
     if vx or vy:
         if control_settings.pointer_based_movement:
             # move in direction of the pointer
-            cos = math.cos(self.rotation + math.pi / 2)
-            sin = math.sin(self.rotation + math.pi / 2)
+            cos = math.cos(world.rotation + math.pi / 2)
+            sin = math.sin(world.rotation + math.pi / 2)
             vx, vy = cos * vx - sin * vy, sin * vx + cos * vy
 
         norm = (vx**2 + vy**2)**.5
@@ -414,10 +409,10 @@ def animate(time_elapsed):
     for bullet in world.bullets[:]:
         bullet.animate(time_elapsed)
         hit_someone = False
-        for player in world.players.values():
+        for uuid, player in world.players.items():
             if (player.x - bullet.x)**2 + (player.y - bullet.y)**2 < 10**2:
                 # hit
-                player.hit(.1)
+                client_protocol.send(type="hit", player=uuid, strength=.1)
                 hit_someone = True
         if hit_someone:
             world.bullets.remove(bullet)
@@ -454,7 +449,6 @@ class ClientProtocol(asyncio.Protocol):
 
     def connection_made(self, transport: asyncio.WriteTransport) -> None:
         self.transport = transport
-        self.send(type="message")
 
     def connection_lost(self, exc) -> None:
         print("server closed connection")
@@ -490,15 +484,42 @@ class ClientProtocol(asyncio.Protocol):
         world.map_height = len(world.map)
         world.map_width = len(world.map[0])
 
+    def handle_uuid(self, message):
+        world.uuid = message["uuid"]
+
+    def handle_players(self, message):
+        for uuid, (x, y, rotation, health) in message["players"].items():
+            if uuid == world.uuid:
+                world.pos_x = x
+                world.pos_y = y
+                world.rotation = rotation
+                world.health = health
+            elif uuid not in world.players:
+                world.players[uuid] = Player(x, y, rotation, health)
+            else:
+                world.players[uuid].x = x
+                world.players[uuid].y = y
+                world.players[uuid].rotation = rotation
+                world.players[uuid].health = health
+
+        for disconnected_uuid in set(world.players) - set(message["players"]):
+            del world.players[disconnected_uuid]
+
+        drawingarea.queue_draw()
+
     def handle_position(self, message):
         uuid = message["player"]
-        if uuid not in world.players:
-            world.players[uuid] = Player(message["x"], message["y"], message["rotation"], .5)
+        world.players[uuid].x = message["x"]
+        world.players[uuid].y = message["y"]
+        world.players[uuid].rotation = message["rotation"]
+        drawingarea.queue_draw()
+
+    def handle_health(self, message):
+        uuid = message["player"]
+        if uuid == world.uuid:
+            world.health = message["health"]
         else:
-            world.players[uuid].x = message["x"]
-            world.players[uuid].y = message["y"]
-            world.players[uuid].rotation = message["rotation"]
-            print("rotation", message["rotation"])
+            world.players[uuid].health = message["health"]
         drawingarea.queue_draw()
 
 
