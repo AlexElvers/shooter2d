@@ -84,11 +84,8 @@ class World:
         self.map: List[str] = None
         self.map_height: int = None
         self.map_width: int = None
-        self.uuid: str = None
-        self.pos_x = 400
-        self.pos_y = 400
-        self.rotation = 0
-        self.health = .65
+        self.player_uuid: str = None
+        self.player: Player = None
         self.max_speed = 70
         self.bullets: List[Bullet] = []
         self.players: Dict[str, Player] = {}
@@ -97,6 +94,9 @@ class World:
 def draw(widget: Gtk.Widget, cr: cairo.Context):
     if not world.map:
         return
+
+    player_x = world.player.x
+    player_y = world.player.y
 
     allocation = widget.get_allocation()
     tile_width = allocation.width / world.map_width
@@ -122,8 +122,8 @@ def draw(widget: Gtk.Widget, cr: cairo.Context):
                 for dest_x, dest_y in itertools.product([left, right], [top, bottom]):
                     other_x = {left: right, right: left}[dest_x]
                     other_y = {top: bottom, bottom: top}[dest_y]
-                    if line_goes_through_border(world.pos_x, world.pos_y, dest_x, dest_y, other_x, top, bottom) \
-                            or line_goes_through_border(world.pos_y, world.pos_x, dest_y, dest_x, other_y, left, right):
+                    if line_goes_through_border(player_x, player_y, dest_x, dest_y, other_x, top, bottom) \
+                            or line_goes_through_border(player_y, player_x, dest_y, dest_x, other_y, left, right):
                         continue
                     shadow_points.append((dest_x, dest_y))
                 if len(shadow_points) == 3:
@@ -166,7 +166,7 @@ def draw(widget: Gtk.Widget, cr: cairo.Context):
                     bottom = top + tile_height
                     if collision_rect_line(
                             Rectangle(left, right, top, bottom),
-                            world.pos_x, world.pos_y, player.x, player.y):
+                            player_x, player_y, player.x, player.y):
                         collides = True
                         break
             if collides:
@@ -174,7 +174,7 @@ def draw(widget: Gtk.Widget, cr: cairo.Context):
         if not collides:
             draw_player(cr, player)
 
-    draw_player(cr, Player(world.pos_x, world.pos_y, world.rotation, world.health))
+    draw_player(cr, Player(player_x, player_y, world.player.rotation, world.player.health))
 
     for bullet in world.bullets:
         draw_bullet(cr, bullet)
@@ -183,27 +183,27 @@ def draw(widget: Gtk.Widget, cr: cairo.Context):
 def extend_shadow_points(shadow_points, allocation):
     yield shadow_points[0]
 
-    dx = shadow_points[0][0] - world.pos_x or 1e-10
-    dy = shadow_points[0][1] - world.pos_y or 1e-10
+    dx = shadow_points[0][0] - world.player.x or 1e-10
+    dy = shadow_points[0][1] - world.player.y or 1e-10
     m = min([i for i in [
-        (-world.pos_x) / dx,
-        (allocation.width - world.pos_x) / dx,
-        (-world.pos_y) / dy,
-        (allocation.height - world.pos_y) / dy,
+        (-world.player.x) / dx,
+        (allocation.width - world.player.x) / dx,
+        (-world.player.y) / dy,
+        (allocation.height - world.player.y) / dy,
     ] if i > 0])
-    extra1_x = world.pos_x + m * dx
-    extra1_y = world.pos_y + m * dy
+    extra1_x = world.player.x + m * dx
+    extra1_y = world.player.y + m * dy
 
-    dx = shadow_points[1][0] - world.pos_x or 1e-10
-    dy = shadow_points[1][1] - world.pos_y or 1e-10
+    dx = shadow_points[1][0] - world.player.x or 1e-10
+    dy = shadow_points[1][1] - world.player.y or 1e-10
     m = min([i for i in [
-        (-world.pos_x) / dx,
-        (allocation.width - world.pos_x) / dx,
-        (-world.pos_y) / dy,
-        (allocation.height - world.pos_y) / dy,
+        (-world.player.x) / dx,
+        (allocation.width - world.player.x) / dx,
+        (-world.player.y) / dy,
+        (allocation.height - world.player.y) / dy,
     ] if i > 0])
-    extra2_x = world.pos_x + m * dx
-    extra2_y = world.pos_y + m * dy
+    extra2_x = world.player.x + m * dx
+    extra2_y = world.player.y + m * dy
 
     yield extra1_x, extra1_y
 
@@ -312,21 +312,21 @@ def draw_bullet(cr: cairo.Context, bullet: Bullet) -> None:
 
 
 def mouse_motion(widget: Gtk.Widget, event: Gdk.EventMotion):
-    # world.pos_x = round(event.x)  # TODO we don't need round, just for testing purposes for the shadow
-    # world.pos_y = round(event.y)
+    # world.player.x = round(event.x)  # TODO we don't need round, just for testing purposes for the shadow
+    # world.player.y = round(event.y)
     window_state.pointer_x = event.x
     window_state.pointer_y = event.y
-    world.rotation = math.atan2(window_state.pointer_y - world.pos_y, window_state.pointer_x - world.pos_x)
+    world.player.rotation = math.atan2(window_state.pointer_y - world.player.y, window_state.pointer_x - world.player.x)
     widget.queue_draw()
-    client_protocol.send(type="position", x=world.pos_x, y=world.pos_y, rotation=world.rotation)
+    client_protocol.send(type="position", x=world.player.x, y=world.player.y, rotation=world.player.rotation)
 
 
 def press_button(widget: Gtk.Widget, event: Gdk.EventButton):
     if event.type == Gdk.EventType.BUTTON_PRESS:
-        dx = event.x - world.pos_x
-        dy = event.y - world.pos_y
+        dx = event.x - world.player.x
+        dy = event.y - world.player.y
         norm = (dx**2 + dy**2)**.5
-        world.bullets.append(Bullet(world.pos_x, world.pos_y, 500 * dx / norm, 500 * dy / norm))
+        world.bullets.append(Bullet(world.player.x, world.player.y, 500 * dx / norm, 500 * dy / norm))
     return True
 
 
@@ -354,20 +354,20 @@ def handle_keys(time_elapsed):
     if vx or vy:
         if control_settings.pointer_based_movement:
             # move in direction of the pointer
-            cos = math.cos(world.rotation + math.pi / 2)
-            sin = math.sin(world.rotation + math.pi / 2)
+            cos = math.cos(world.player.rotation + math.pi / 2)
+            sin = math.sin(world.player.rotation + math.pi / 2)
             vx, vy = cos * vx - sin * vy, sin * vx + cos * vy
 
         norm = (vx**2 + vy**2)**.5
-        new_pos_x = world.pos_x + time_elapsed * speed * vx / norm
-        new_pos_y = world.pos_y + time_elapsed * speed * vy / norm
+        new_pos_x = world.player.x + time_elapsed * speed * vx / norm
+        new_pos_y = world.player.y + time_elapsed * speed * vy / norm
 
         would_collide = False
         allocation = drawingarea.get_allocation()
         tile_width = allocation.width / world.map_width
         tile_height = allocation.height / world.map_height
-        tile_x = int(world.pos_x / tile_width)
-        tile_y = int(world.pos_y / tile_height)
+        tile_x = int(world.player.x / tile_width)
+        tile_y = int(world.player.y / tile_height)
         tile_x_lower = max(0, tile_x - 1)
         tile_x_upper = min(world.map_width, tile_x + 2)
         tile_y_lower = max(0, tile_y - 1)
@@ -388,16 +388,16 @@ def handle_keys(time_elapsed):
                 break
 
         if not would_collide:
-            world.pos_x = new_pos_x
-            world.pos_y = new_pos_y
+            world.player.x = new_pos_x
+            world.player.y = new_pos_y
             drawingarea.queue_draw()
-            client_protocol.send(type="position", x=world.pos_x, y=world.pos_y, rotation=world.rotation)
+            client_protocol.send(type="position", x=world.player.x, y=world.player.y, rotation=world.player.rotation)
 
     if "Up" in window_state.pressed_keys:
-        world.health = min(1, world.health + time_elapsed * .2)
+        world.player.health = min(1, world.player.health + time_elapsed * .2)
         drawingarea.queue_draw()
     if "Down" in window_state.pressed_keys:
-        world.health = max(0, world.health - time_elapsed * .2)
+        world.player.health = max(0, world.player.health - time_elapsed * .2)
         drawingarea.queue_draw()
 
 
@@ -410,6 +410,8 @@ def animate(time_elapsed):
         bullet.animate(time_elapsed)
         hit_someone = False
         for uuid, player in world.players.items():
+            if uuid == world.player_uuid:
+                continue
             if (player.x - bullet.x)**2 + (player.y - bullet.y)**2 < 10**2:
                 # hit
                 client_protocol.send(type="hit", player=uuid, strength=.1)
@@ -485,17 +487,14 @@ class ClientProtocol(asyncio.Protocol):
         world.map_width = len(world.map[0])
 
     def handle_uuid(self, message):
-        world.uuid = message["uuid"]
+        world.player_uuid = message["uuid"]
 
     def handle_players(self, message):
         for uuid, (x, y, rotation, health) in message["players"].items():
-            if uuid == world.uuid:
-                world.pos_x = x
-                world.pos_y = y
-                world.rotation = rotation
-                world.health = health
-            elif uuid not in world.players:
+            if uuid not in world.players:
                 world.players[uuid] = Player(x, y, rotation, health)
+                if uuid == world.player_uuid:
+                    world.player = world.players[uuid]
             else:
                 world.players[uuid].x = x
                 world.players[uuid].y = y
@@ -516,10 +515,7 @@ class ClientProtocol(asyncio.Protocol):
 
     def handle_health(self, message):
         uuid = message["player"]
-        if uuid == world.uuid:
-            world.health = message["health"]
-        else:
-            world.players[uuid].health = message["health"]
+        world.players[uuid].health = message["health"]
         drawingarea.queue_draw()
 
 
