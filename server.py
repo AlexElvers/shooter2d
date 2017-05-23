@@ -112,33 +112,31 @@ class ServerClientProtocol(asyncio.Protocol):
 
             print("message:", message)
 
-            message_type = message.get("type")
+            message_type = message.pop("type", None)
             if isinstance(message_type, str):
                 handler = getattr(self, f"handle_{message_type}", None)
                 if handler:
-                    handler(message)
+                    try:
+                        handler(**message)
+                    except TypeError as e:
+                        self.send(type="error", error=f"invalid handler arguments: {e}")
                 else:
                     self.send(type="error", error=f"invalid message type: {message_type!r}")
             else:
                 self.send(type="error", error="invalid message: type missing")
 
-    def handle_position(self, message):
-        x = message.get("x")
-        y = message.get("y")
-        rotation = message.get("rotation")
+    def handle_position(self, x, y, rotation):
         if isinstance(x, float) and isinstance(y, float) and isinstance(rotation, float):
             world.players[self.uuid].x = x
             world.players[self.uuid].y = y
             world.players[self.uuid].rotation = rotation
-            self.send_others(type="position", player=self.uuid, x=x, y=y, rotation=rotation)
+            self.send_others(type="position", uuid=self.uuid, x=x, y=y, rotation=rotation)
 
-    def handle_hit(self, message):
-        uuid = message.get("player")
-        strength = message.get("strength")
+    def handle_hit(self, uuid, strength):
         if uuid in world.players:
             player = world.players[uuid]
             player.hit(strength)
-            self.send_all(type="health", player=uuid, health=player.health)
+            self.send_all(type="health", uuid=uuid, health=player.health)
         else:
             self.send(type="error", error=f"unknown uuid: {uuid!r}")
 

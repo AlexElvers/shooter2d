@@ -414,7 +414,7 @@ def animate(time_elapsed):
                 continue
             if (player.x - bullet.x)**2 + (player.y - bullet.y)**2 < 10**2:
                 # hit
-                client_protocol.send(type="hit", player=uuid, strength=.1)
+                client_protocol.send(type="hit", uuid=uuid, strength=.1)
                 hit_someone = True
         if hit_someone:
             world.bullets.remove(bullet)
@@ -468,29 +468,32 @@ class ClientProtocol(asyncio.Protocol):
                 print(f"received invalid data: {line!r}")
                 return
 
-            message_type = message.get("type")
+            message_type = message.pop("type", None)
             if isinstance(message_type, str):
                 handler = getattr(self, f"handle_{message_type}", None)
                 if handler:
-                    handler(message)
+                    try:
+                        handler(**message)
+                    except TypeError as e:
+                        print(f"invalid handler arguments: {e}")
                 else:
                     print(f"invalid message type: {message_type!r}")
             else:
                 print("invalid message: type missing")
 
-    def handle_error(self, message):
-        print("error from server:", message["error"])
+    def handle_error(self, error):
+        print("got error from server:", error)
 
-    def handle_world(self, message):
-        world.map = message["map"]
+    def handle_world(self, map):
+        world.map = map
         world.map_height = len(world.map)
         world.map_width = len(world.map[0])
 
-    def handle_uuid(self, message):
-        world.player_uuid = message["uuid"]
+    def handle_uuid(self, uuid):
+        world.player_uuid = uuid
 
-    def handle_players(self, message):
-        for uuid, (x, y, rotation, health) in message["players"].items():
+    def handle_players(self, players):
+        for uuid, (x, y, rotation, health) in players.items():
             if uuid not in world.players:
                 world.players[uuid] = Player(x, y, rotation, health)
                 if uuid == world.player_uuid:
@@ -501,21 +504,19 @@ class ClientProtocol(asyncio.Protocol):
                 world.players[uuid].rotation = rotation
                 world.players[uuid].health = health
 
-        for disconnected_uuid in set(world.players) - set(message["players"]):
+        for disconnected_uuid in set(world.players) - set(players):
             del world.players[disconnected_uuid]
 
         drawingarea.queue_draw()
 
-    def handle_position(self, message):
-        uuid = message["player"]
-        world.players[uuid].x = message["x"]
-        world.players[uuid].y = message["y"]
-        world.players[uuid].rotation = message["rotation"]
+    def handle_position(self, uuid, x, y, rotation):
+        world.players[uuid].x = x
+        world.players[uuid].y = y
+        world.players[uuid].rotation = rotation
         drawingarea.queue_draw()
 
-    def handle_health(self, message):
-        uuid = message["player"]
-        world.players[uuid].health = message["health"]
+    def handle_health(self, uuid, health):
+        world.players[uuid].health = health
         drawingarea.queue_draw()
 
 
